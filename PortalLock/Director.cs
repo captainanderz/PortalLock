@@ -76,6 +76,7 @@ sealed class Director
     async void StartIntro()
     {
         Enter(Phase.Intro);
+        ov.Post(new { cmd = "unlocked" }); // the crack comes alive while we photograph the desktop
         var keep = new List<Img>();
         Bitmap? shot = null;
         try
@@ -152,12 +153,12 @@ sealed class Director
         if (locked)
         {
             if (phase == Phase.Locked || !ov.Ready) return;
-            // Locked some other way (Win+L, Ctrl+Alt+Del, timeout): cover the desktop with black now,
-            // behind the lock screen, so the portal can bring everything back on unlock.
+            // Locked some other way (Win+L, Ctrl+Alt+Del, screensaver, timeout): cover the desktop with
+            // the sealed crack now, behind the lock screen, so the portal can tear it open on unlock.
             var wasIdle = phase == Phase.Idle;
             Enter(Phase.Locked);
             frameReady = new TaskCompletionSource();
-            ov.Post(new { cmd = "black" });
+            ov.PostSealed(animate: false);
             if (wasIdle) await Task.WhenAny(frameReady.Task, Task.Delay(800));
             if (phase == Phase.Locked) ov.MoveOn();
         }

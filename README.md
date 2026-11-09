@@ -18,6 +18,19 @@ running, the command goes to that running copy.
 
 Tray menu → *Start with Windows* adds it to `HKCU\...\Run`.
 
+## Lock screen and screensaver
+
+Windows' lock screen can only show a still picture, so the portal hands over to it seamlessly instead:
+
+- **Lock screen picture:** `assets/lockscreen-2560x1440.png` is the portal sealed into a glowing crack.
+  The lock animation ends on exactly this frame, and the unlock animation starts from it and tears
+  the crack open. Set it under Settings → Personalization → Lock screen → *Picture*. To render it at
+  another size, serve `PortalLock/web/` and open `lockscreen.html?w=3840&h=2160`.
+- **Screensaver:** tray → *Use as screensaver (10 min)* (or `PortalLock.exe screensaver-on` / `-off`).
+  While the PC is idle the crack comes alive: the mist turns, embers drift and the crack breathes.
+  Any input ends it and Windows locks, showing the same crack, frozen. It runs as `PortalLock.scr`,
+  a copy of the exe that PortalLock refreshes after a rebuild.
+
 ## Build
 
 Open `PortalLock.slnx` in Rider, or from the command line:

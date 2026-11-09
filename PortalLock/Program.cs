@@ -13,7 +13,21 @@ static class App
     [STAThread]
     static void Main(string[] args)
     {
-        var action = args.FirstOrDefault()?.TrimStart('-', '/').ToLowerInvariant();
+        var action = args.FirstOrDefault()?.TrimStart('-', '/').ToLowerInvariant() ?? "";
+
+        // Windows runs screensavers as "PortalLock.scr /s"; "/p <hwnd>" (preview) and "/c" (settings)
+        // are not supported, and an .scr started with no arguments means "settings" too.
+        if (action == "s" || action.StartsWith("s:"))
+        {
+            ApplicationConfiguration.Initialize();
+            Application.Run(new ScreenSaverApp());
+            return;
+        }
+        bool isScr = Environment.ProcessPath?.EndsWith(".scr", StringComparison.OrdinalIgnoreCase) == true;
+        if (isScr || action.StartsWith('p') || action.StartsWith('c')) return;
+        if (action == "screensaver-on") { ScreenSaverSetup.Enable(); return; }
+        if (action == "screensaver-off") { ScreenSaverSetup.Disable(); return; }
+
         using var mutex = new Mutex(true, @"Local\PortalLock.Instance", out bool first);
         if (!first)
         {
@@ -37,7 +51,7 @@ sealed class TrayApp : ApplicationContext
     readonly Director director;
     readonly NotifyIcon icon;
 
-    public TrayApp(string? initial, string lockEvent, string testEvent)
+    public TrayApp(string initial, string lockEvent, string testEvent)
     {
         director = new Director(ov);
         ov.Hotkey += id => director.Open(doLock: id == HotkeyLock);
@@ -49,6 +63,10 @@ sealed class TrayApp : ApplicationContext
         var autostart = new ToolStripMenuItem("Start with Windows") { Checked = IsAutostart(), CheckOnClick = true };
         autostart.CheckedChanged += (_, _) => SetAutostart(autostart.Checked);
         menu.Items.Add(autostart);
+        var saver = new ToolStripMenuItem("Use as screensaver (10 min)") { Checked = ScreenSaverSetup.IsEnabled(), CheckOnClick = true };
+        saver.CheckedChanged += (_, _) => { if (saver.Checked) ScreenSaverSetup.Enable(); else ScreenSaverSetup.Disable(); };
+        menu.Items.Add(saver);
+        ScreenSaverSetup.RefreshIfEnabled();
         menu.Items.Add("Open log folder", null, (_, _) => System.Diagnostics.Process.Start("explorer.exe", App.DataDir));
         menu.Items.Add("Exit", null, (_, _) => Quit());
 

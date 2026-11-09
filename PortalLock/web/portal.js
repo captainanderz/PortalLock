@@ -1,5 +1,5 @@
 'use strict';
-/* global VS_FULL, FS_IMAGE, VS_SPRITE, FS_SPRITE, VS_PORTAL, FS_PORTAL, VS_PART, FS_PART, FS_FADE */
+/* global VS_FULL, FS_IMAGE, VS_SPRITE, FS_SPRITE, VS_PORTAL, FS_PORTAL, VS_PART, FS_PART, FS_FADE, FS_MIST */
 
 const cv = document.getElementById('c');
 const gl = cv.getContext('webgl2', { alpha: false, antialias: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
@@ -55,6 +55,7 @@ const P_SPR = program(VS_SPRITE, FS_SPRITE, 'aPos');
 const P_POR = program(VS_PORTAL, FS_PORTAL, 'aPos');
 const P_PAR = program(VS_PART, FS_PART, 'aSeed');
 const P_FADE = program(VS_FULL, FS_FADE);
+const P_MIST = program(VS_FULL, FS_MIST);
 
 const emptyVao = gl.createVertexArray();
 const quadVao = gl.createVertexArray();
@@ -64,13 +65,23 @@ gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-0.5, -0.5, 0.5, -0.5, -0.5, 0.
 gl.enableVertexAttribArray(0);
 gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
+// Seeded so the sparks land in the same places every time: the lock screen picture must match
+// the last frame of the lock animation.
+function mulberry32(a) {
+  return () => {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const rnd = mulberry32(20261106);
 const NPART = 700;
 const partVao = gl.createVertexArray();
 gl.bindVertexArray(partVao);
 const seeds = new Float32Array(NPART * 4);
 for (let i = 0; i < NPART; i++) {
-  seeds.set([Math.random() * Math.PI * 2, 1.15 + Math.pow(Math.random(), 1.5) * 3.2,
-             0.22 + Math.random() * 0.45, Math.random()], i * 4);
+  seeds.set([rnd() * Math.PI * 2, 1.15 + Math.pow(rnd(), 1.5) * 3.2, 0.22 + rnd() * 0.45, rnd()], i * 4);
 }
 gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
 gl.bufferData(gl.ARRAY_BUFFER, seeds, gl.STATIC_DRAW);
@@ -79,15 +90,25 @@ gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 0, 0);
 gl.bindVertexArray(null);
 
 // ---------------------------------------------------------------- scene state
+const SEAL_T = 7.3; // the moment the lock screen picture shows
 const S = {
   mode: null, started: false, t0: null, t: 0, speed: 1,
-  vw: 1, vh: 1, P: [0, 0], R0: [1, 1],
+  vw: 1, vh: 1, P: [0, 0], R0: [1, 1], F: [0, 0, 1, 1],
   shot: null, bg: null, wins: [], layersT: null,
+  sealT0: null, sealAnim: false, tau0: SEAL_T,
 };
+
+function setGeometry(m) {
+  S.vw = m.vw; S.vh = m.vh;
+  if (cv.width !== m.vw || cv.height !== m.vh) { cv.width = m.vw; cv.height = m.vh; }
+  S.P = [m.px, m.py];
+  S.R0 = [m.rx, m.ry];
+  S.F = m.fw ? [m.fx, m.fy, m.fw, m.fh] : [0, 0, m.vw, m.vh];
+}
 
 function clearScene() {
   new Set([S.shot, S.bg, ...S.wins.map(w => w.tex)]).forEach(t => t && gl.deleteTexture(t));
-  Object.assign(S, { shot: null, bg: null, wins: [], layersT: null, started: false, t0: null, t: 0 });
+  Object.assign(S, { shot: null, bg: null, wins: [], layersT: null, started: false, t0: null, t: 0, sealAnim: false });
 }
 
 function drawBlack() {
@@ -96,15 +117,85 @@ function drawBlack() {
   gl.clear(gl.COLOR_BUFFER_BIT);
 }
 
+// ---------------------------------------------------------------- timing helpers
+const clamp01 = x => Math.min(1, Math.max(0, x));
+const smooth = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+const easeOutCubic = x => 1 - Math.pow(1 - x, 3);
+const easeInCubic = x => x * x * x;
+const easeOutBack = (x, s = 1.70158) => 1 + (s + 1) * Math.pow(x - 1, 3) + s * Math.pow(x - 1, 2);
+const bell = (t, c, w) => Math.exp(-(((t - c) / w) ** 2));
+const shakeAmt = (t, t0, dur, amp) => (t >= t0 && t < t0 + dur) ? amp * (1 - (t - t0) / dur) : 0;
+
+// ---------------------------------------------------------------- shared drawing
+function frameSetup() {
+  const W = gl.drawingBufferWidth, H = gl.drawingBufferHeight;
+  gl.viewport(0, 0, W, H);
+  gl.disable(gl.BLEND);
+  gl.clearColor(0, 0, 0, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // premultiplied alpha everywhere
+  gl.activeTexture(gl.TEXTURE0);
+  return { res: [S.vw, S.vh], buf: [W, H] };
+}
+function drawMist(c, tau, alpha, sh) {
+  gl.bindVertexArray(emptyVao);
+  use(P_MIST, { uRes: c.res, uBuf: c.buf, uP: S.P, uR0: S.R0, uShake: [-sh[0], -sh[1]], uFrame: S.F,
+                uTau: tau, uAlpha: alpha });
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+function drawPortal(c, P, rx, ry, tau, flow, flash) {
+  gl.bindVertexArray(quadVao);
+  use(P_POR, { uRes: c.res, uP: P, uHalf: [S.R0[0] * 2.9, S.R0[1] * 2.9], uR: [rx, ry], uR0: S.R0,
+               uTime: tau, uFlow: flow, uFlash: flash, uVis: clamp01(ry / S.R0[1] * 4) });
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+function drawSparks(c, P, tau, flow, amt) {
+  if (amt <= 0.01) return;
+  gl.bindVertexArray(partVao);
+  use(P_PAR, { uRes: c.res, uBuf: c.buf, uP: P, uR0: S.R0, uTime: tau, uFlow: flow, uAmt: amt });
+  gl.drawArrays(gl.POINTS, 0, NPART);
+}
+
+// ---------------------------------------------------------------- the sealed crack
+const crack = () => [Math.max(S.R0[1] * 0.009, 2), S.R0[1] * 0.52];
+const sealFlash = tau => 0.12 + 0.05 * Math.sin(tau * 1.7); // the crack breathes
+const sealTau = now => SEAL_T + (now - S.sealT0) / 1000;
+
+function drawSealed(tau) {
+  const c = frameSetup();
+  const [cw, ch] = crack();
+  drawMist(c, tau, 1, [0, 0]);
+  drawPortal(c, S.P, cw, ch, tau, 1, sealFlash(tau));
+  drawSparks(c, S.P, tau, 1, 0.55);
+}
+
+let lastSeal = 0;
+function sealLoop(now) {
+  if (S.mode !== 'sealed' || !S.sealAnim) return;
+  if (now - lastSeal > 30) { lastSeal = now; drawSealed(sealTau(now)); } // ~30 fps is plenty
+  requestAnimationFrame(sealLoop);
+}
+
+/** Show the crack, frozen at the lock screen's moment, optionally coming alive from there. */
+function showSealed(animate) {
+  S.mode = 'sealed';
+  S.sealT0 = performance.now();
+  drawSealed(SEAL_T);
+  S.sealAnim = animate;
+  if (animate) requestAnimationFrame(sealLoop);
+}
+
+// ---------------------------------------------------------------- scenes from the host
 /** A batch of images arrived (one shared buffer). part: 'shot' | 'layers' | 'all'. */
 function onScene(meta, buffer) {
   if (meta.part !== 'layers') {
+    // The intro continues the crack from wherever its idle animation has got to.
+    const tau0 = S.mode === 'sealed' && S.sealT0 !== null ? sealTau(performance.now()) : SEAL_T;
     clearScene();
     S.mode = meta.mode;
-    S.vw = meta.vw; S.vh = meta.vh;
-    if (cv.width !== meta.vw || cv.height !== meta.vh) { cv.width = meta.vw; cv.height = meta.vh; }
-    S.P = [meta.px, meta.py];
-    S.R0 = [meta.rx, meta.ry];
+    S.tau0 = tau0;
+    setGeometry(meta);
   } else if (S.mode !== 'outro') {
     return; // stale layers for a show that was cancelled
   }
@@ -125,6 +216,24 @@ function onScene(meta, buffer) {
   }
 }
 
+function handleCommand(m) {
+  if (m.cmd === 'go') {
+    start();
+  } else if (m.cmd === 'sealed') {
+    clearScene();
+    setGeometry(m);
+    showSealed(!!m.animate);
+    requestAnimationFrame(() => send('frame'));
+  } else if (m.cmd === 'unlocked') {
+    // Restart the crack at the lock screen's moment so it matches the picture you just saw.
+    if (S.mode === 'sealed') { S.sealT0 = performance.now(); S.sealAnim = true; requestAnimationFrame(sealLoop); }
+  } else if (m.cmd === 'abort') {
+    clearScene();
+    S.mode = null;
+    drawBlack();
+  }
+}
+
 function start() {
   if (S.started || !S.mode) return;
   S.started = true;
@@ -137,23 +246,17 @@ function loop(now) {
   if (S.t0 === null) S.t0 = now;
   const st = render((now - S.t0) / 1000 * S.speed);
   if (st.done) {
-    S.started = false;
-    send(S.mode + 'Done');
+    const mode = S.mode;
+    clearScene();
+    if (mode === 'outro') { S.mode = 'sealed'; S.sealT0 = now; } // the last frame is the sealed crack
+    send(mode + 'Done');
     return;
   }
   requestAnimationFrame(loop);
 }
 
-// ---------------------------------------------------------------- timing helpers
-const clamp01 = x => Math.min(1, Math.max(0, x));
-const smooth = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
-const easeOutCubic = x => 1 - Math.pow(1 - x, 3);
-const easeInCubic = x => x * x * x;
-const easeOutBack = (x, s = 1.70158) => 1 + (s + 1) * Math.pow(x - 1, 3) + s * Math.pow(x - 1, 2);
-const bell = (t, c, w) => Math.exp(-(((t - c) / w) ** 2));
-const shakeAmt = (t, t0, dur, amp) => (t >= t0 && t < t0 + dur) ? amp * (1 - (t - t0) / dur) : 0;
-
-/** Portal tears open: a vertical crack first, then it widens. */
+// ---------------------------------------------------------------- the two shows
+/** Portal tears open from nothing: a vertical crack first, then it widens. */
 function portalOpen(t, t0) {
   return [S.R0[0] * easeOutBack(clamp01((t - t0 - 0.17) / 0.55)),
           S.R0[1] * easeOutCubic(clamp01((t - t0) / 0.3))];
@@ -182,12 +285,11 @@ function pose(w, e, jit) {
   };
 }
 
-// ---------------------------------------------------------------- the two shows
 function outroState(t) {
-  const st = { v: 0, dim: 0.42 * smooth(0.15, 1.3, t), shotMix: 1, black: 0, screenFlash: 0,
+  const st = { v: 0, dim: 0.42 * smooth(0.15, 1.3, t), shotMix: 1, screenFlash: 0, mist: 0,
                flash: bell(t, 0.22, 0.12) * 0.7, flow: 1, done: false, poses: [] };
-  const [rx, ry] = portalOpen(t, 0.15);
-  let shake = shakeAmt(t, 0.15, 0.5, 5), k = 1;
+  let [rx, ry] = portalOpen(t, 0.15);
+  let shake = shakeAmt(t, 0.15, 0.5, 5), doneT = 5;
   if (S.layersT !== null) {
     const N = S.wins.length, tl = S.layersT;
     const W0 = Math.max(0.9, tl + 0.35), s = Math.min(0.2, 1.8 / Math.max(N, 1));
@@ -208,22 +310,32 @@ function outroState(t) {
     const WE = N ? W0 + (N - 1) * s + 1.18 : W0 + 0.3;
     const VS = Math.max(WE - 0.35, W0 + 0.5);
     st.v = easeInCubic(clamp01((t - VS) / 1.3));
-    const C0 = VS + 1.15;                     // portal collapses
-    k = 1 - easeInCubic(clamp01((t - C0) / 0.35));
-    st.flash += bell(t, C0 + 0.3, 0.12) * 2.0;
-    st.screenFlash = bell(t, C0 + 0.34, 0.1) * 0.55;
+    const C0 = VS + 1.15;                     // the portal seals itself into the crack
+    const k = easeInCubic(clamp01((t - C0) / 0.35));
+    const [cw, ch] = crack();
+    rx += (cw - rx) * k;
+    ry += (ch - ry) * k;
+    st.mist = smooth(C0 + 0.1, C0 + 0.5, t);
+    st.flash += bell(t, C0 + 0.3, 0.12) * 1.6;
+    st.screenFlash = bell(t, C0 + 0.34, 0.1) * 0.4;
     shake += shakeAmt(t, C0 - 0.1, 0.5, 9);
-    st.black = smooth(C0 + 0.28, C0 + 0.5, t);
-    st.done = t > C0 + 0.62;
+    doneT = C0 + 0.62;
+    st.done = t > doneT;
   }
-  return finishState(st, rx * k, ry * k, shake);
+  st.tau = SEAL_T + t - doneT;                // lands exactly on the lock screen's moment
+  st.flash += sealFlash(st.tau) * st.mist;
+  return finishState(st, rx, ry, shake);
 }
 
 function introState(t) {
-  const N = S.wins.length;
-  const st = { flow: -1, black: 0, screenFlash: 0, flash: bell(t, 0.22, 0.12) * 0.9, poses: [] };
-  const [rx, ry] = portalOpen(t, 0.15);
-  const shake = shakeAmt(t, 0.15, 0.5, 5);
+  const N = S.wins.length, [cw, ch] = crack(), tear = 0.2;
+  const st = { flow: t < tear ? 1 : -1, screenFlash: 0, poses: [], tau: S.tau0 + t };
+  const open = [clamp01((t - tear - 0.12) / 0.55), clamp01((t - tear) / 0.35)];
+  const rx = cw + (S.R0[0] - cw) * easeOutBack(open[0]);   // the crack from the lock screen rips open
+  const ry = ch + (S.R0[1] - ch) * easeOutCubic(open[1]);
+  st.mist = 1 - smooth(0.45, 1.5, t);
+  st.flash = bell(t, tear + 0.08, 0.12) * 0.9 + sealFlash(st.tau) * st.mist;
+  const shake = shakeAmt(t, tear, 0.5, 5);
   st.v = 1 - easeOutCubic(clamp01((t - 0.5) / 1.3));   // desktop spirals back out
   const W0 = 1.05, s = Math.min(0.13, 1.4 / Math.max(N, 1));
   for (let i = 0; i < N; i++) {             // bottom window first, topmost lands last
@@ -241,74 +353,53 @@ function introState(t) {
 
 function finishState(st, rx, ry, shake) {
   st.ry = ry;
-  st.rx = Math.max(rx, ry > 1 ? 3 : 0);       // never thinner than a glowing crack
+  st.rx = Math.max(rx, ry > 1 ? 2 : 0);       // never thinner than a glowing crack
   st.amt = clamp01(ry / S.R0[1]) * clamp01(st.rx / S.R0[0] * 1.5);
+  st.ember = 0.55 * st.mist;                  // the drifting embers of the sealed crack
   st.shake = shake;
   return st;
 }
 
-// ---------------------------------------------------------------- drawing
+// ---------------------------------------------------------------- drawing a frame of a show
 function render(t) {
   S.t = t;
   const st = S.mode === 'intro' ? introState(t) : outroState(t);
-  const W = gl.drawingBufferWidth, H = gl.drawingBufferHeight;
-  const res = [S.vw, S.vh], buf = [W, H];
+  const c = frameSetup();
   const sh = [st.shake * Math.sin(t * 71), st.shake * Math.cos(t * 53)];
   const P = [S.P[0] + sh[0], S.P[1] + sh[1]];
   const open = clamp01(st.ry / S.R0[1]);
 
-  gl.viewport(0, 0, W, H);
-  gl.disable(gl.BLEND);
-  gl.clearColor(0, 0, 0, 1);
-  gl.clear(gl.COLOR_BUFFER_BIT);
-  gl.enable(gl.BLEND);
-  gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // premultiplied alpha everywhere
-  gl.activeTexture(gl.TEXTURE0);
-
   const image = (tex, v, alpha) => {
     gl.bindVertexArray(emptyVao);
     gl.bindTexture(gl.TEXTURE_2D, tex);
-    use(P_IMG, { uRes: res, uBuf: buf, uP: S.P, uShake: [-sh[0], -sh[1]], uV: v, uAlpha: alpha,
+    use(P_IMG, { uRes: c.res, uBuf: c.buf, uP: S.P, uShake: [-sh[0], -sh[1]], uV: v, uAlpha: alpha,
                  uDim: st.dim, uAmb: open, uRy: S.R0[1] });
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   };
 
   const bgTex = S.bg || S.shot;
-  if (S.layersT !== null && st.shotMix < 1 && bgTex) image(bgTex, st.v, 1);
+  if (S.layersT !== null && st.shotMix < 1 && bgTex && st.mist < 1) image(bgTex, st.v, 1);
 
   gl.bindVertexArray(quadVao);
   for (let i = S.wins.length - 1; i >= 0; i--) {
     const p = st.poses[i], w = S.wins[i];
     if (!p || p.alpha <= 0.001 || p.scale <= 0.001) continue;
     gl.bindTexture(gl.TEXTURE_2D, w.tex);
-    use(P_SPR, { uRes: res, uC: [p.cx + sh[0], p.cy + sh[1]], uSize: [w.w, w.h], uRot: p.rot,
+    use(P_SPR, { uRes: c.res, uC: [p.cx + sh[0], p.cy + sh[1]], uSize: [w.w, w.h], uRot: p.rot,
                  uScale: p.scale, uMargin: 30, uRadius: w.r, uAlpha: p.alpha, uTint: p.tint,
                  uShadow: p.shadow, uTime: t });
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
   if (st.shotMix > 0 && S.shot) image(S.shot, 0, st.shotMix);
+  if (st.mist > 0.001) drawMist(c, st.tau, st.mist, sh);
+  if (st.ry > 0.5 || st.flash > 0.01) drawPortal(c, P, st.rx, st.ry, st.tau, st.flow, st.flash);
+  drawSparks(c, P, st.tau, st.flow, st.amt);
+  drawSparks(c, P, st.tau, 1, st.ember);
 
-  if (st.ry > 0.5 || st.flash > 0.01) {
-    gl.bindVertexArray(quadVao);
-    use(P_POR, { uRes: res, uP: P, uHalf: [S.R0[0] * 2.9, S.R0[1] * 2.9], uR: [st.rx, st.ry], uR0: S.R0,
-                 uTime: t, uFlow: st.flow, uFlash: st.flash, uVis: clamp01(open * 4) });
-    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-  }
-
-  if (st.amt > 0.01) {
-    gl.bindVertexArray(partVao);
-    use(P_PAR, { uRes: res, uBuf: buf, uP: P, uR0: S.R0, uTime: t, uFlow: st.flow, uAmt: st.amt });
-    gl.drawArrays(gl.POINTS, 0, NPART);
-  }
-
-  gl.bindVertexArray(emptyVao);
-  if (st.black > 0) {
-    use(P_FADE, { uC: [0, 0, 0, st.black] });
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-  }
   if (st.screenFlash > 0.003) {
     const f = st.screenFlash;
+    gl.bindVertexArray(emptyVao);
     use(P_FADE, { uC: [0.55 * f, 0.9 * f, 0.45 * f, 0] });
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
@@ -329,16 +420,7 @@ if (host) {
       send('loaded');
     }
   });
-  host.addEventListener('message', e => {
-    const m = e.data || {};
-    if (m.cmd === 'go') start();
-    else if (m.cmd === 'black' || m.cmd === 'abort') {
-      clearScene();
-      S.mode = null;
-      drawBlack();
-      if (m.cmd === 'black') requestAnimationFrame(() => send('frame'));
-    }
-  });
+  host.addEventListener('message', e => handleCommand(e.data || {}));
 }
 drawBlack();
 send('ready');

@@ -137,6 +137,35 @@ void main() {
   o = vec4(col * alpha + emit * uVis + flash, alpha);
 }`;
 
+// Fel mist spiralling into the sealed crack: the lock screen picture, the screensaver, and the
+// frame the lock animation ends on. Everything is relative to the portal centre so all three match.
+const FS_MIST = `#version 300 es
+precision highp float;
+uniform vec2 uRes, uBuf, uP, uR0, uShake;
+uniform vec4 uFrame; // primary monitor (x, y, w, h), for the vignette
+uniform float uTau, uAlpha;
+out vec4 o;
+${NOISE}
+void main() {
+  vec2 px = vec2(gl_FragCoord.x, uBuf.y - gl_FragCoord.y) * (uRes / uBuf) + uShake;
+  vec2 d = (px - uP) / uR0.y;
+  float r = length(d);
+  float ang = atan(d.y, d.x);
+  float a = ang + 1.4 * log(r + 0.15) - uTau * 0.12;            // slowly turning spiral arms
+  float n = fbm(vec3(cos(a) * r, sin(a) * r, uTau * 0.05) * 0.9);
+  float n2 = fbm(vec3(d * 0.7, 3.7 + uTau * 0.03));
+  float smoke = pow(clamp(n * 0.75 + n2 * 0.4, 0.0, 1.0), 2.2);
+  vec3 fel = vec3(0.16, 0.75, 0.08);
+  vec3 col = vec3(0.004, 0.010, 0.005);
+  col += fel * smoke * exp(-r * 0.28) * 0.95;
+  col += fel * 0.10 * exp(-r * 0.8);                             // ambient glow from the seam
+  vec2 e = vec2(d.x / 0.10, d.y / 0.75);
+  col += vec3(0.45, 1.0, 0.25) * 0.55 * exp(-dot(e, e));         // bloom hugging the crack
+  vec2 uv = (px - uFrame.xy) / uFrame.zw - 0.5;
+  col *= 1.0 - smoothstep(0.25, 0.95, length(uv * vec2(uFrame.z / uFrame.w, 1.0)) * 0.9);
+  o = vec4(col * uAlpha, uAlpha);
+}`;
+
 // Sparks spiralling into (or out of) the portal.
 const VS_PART = `#version 300 es
 in vec4 aSeed; // angle, start radius (in portal radii), speed, phase

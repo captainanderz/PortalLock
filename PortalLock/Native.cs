@@ -51,6 +51,22 @@ static class Native
     [DllImport("dwmapi", EntryPoint = "DwmGetWindowAttribute")] public static extern int DwmGetWindowRect(IntPtr h, int attr, out RECT value, int size);
     [DllImport("wtsapi32")] public static extern bool WTSRegisterSessionNotification(IntPtr h, int flags);
     [DllImport("wtsapi32")] public static extern bool WTSUnRegisterSessionNotification(IntPtr h);
+    [DllImport("user32")] static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
+    [DllImport("user32")] public static extern bool SystemParametersInfo(uint action, uint param, IntPtr pv, uint flags);
+
+    public const uint SPI_SETSCREENSAVETIMEOUT = 0x000F, SPI_SETSCREENSAVEACTIVE = 0x0011,
+        SPI_SETSCREENSAVESECURE = 0x0077, SPIF_UPDATEINIFILE_SENDCHANGE = 0x3;
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct LASTINPUTINFO { public uint cbSize, dwTime; }
+
+    /// <summary>Tick count of the last keyboard or mouse input anywhere in the session.</summary>
+    public static uint LastInputTick()
+    {
+        var info = new LASTINPUTINFO { cbSize = 8 };
+        GetLastInputInfo(ref info);
+        return info.dwTime;
+    }
 
     public static string ClassOf(IntPtr h)
     {

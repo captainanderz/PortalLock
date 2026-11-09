@@ -99,7 +99,7 @@
     return;
   }
   window.onPortalMessage = m => {
-    if (m === 'outroDone') setTimeout(intro, 900);
+    if (m === 'outroDone') setTimeout(() => { handleCommand({ cmd: 'unlocked' }); setTimeout(intro, 900); }, 900);
     if (m === 'introDone') setTimeout(outro, 1500);
   };
   setTimeout(outro, 600);

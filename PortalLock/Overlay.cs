@@ -46,13 +46,13 @@ sealed class Overlay : Form
 
     static Rectangle OffRect(Rectangle v) => new(v.Left - v.Width - 500, v.Top, v.Width, v.Height);
 
-    public async Task InitAsync(string webDir)
+    public async Task InitAsync(string webDir, string profile = "WebView2")
     {
         Show();
         Native.SetWindowDisplayAffinity(Handle, Native.WDA_EXCLUDEFROMCAPTURE);
         Native.WTSRegisterSessionNotification(Handle, 0);
 
-        env = await CoreWebView2Environment.CreateAsync(null, Path.Combine(App.DataDir, "WebView2"));
+        env = await CoreWebView2Environment.CreateAsync(null, Path.Combine(App.DataDir, profile));
         ctl = await env.CreateCoreWebView2ControllerAsync(Handle);
         ctl.ShouldDetectMonitorScaleChanges = false;
         ctl.BoundsMode = CoreWebView2BoundsMode.UseRawPixels;
@@ -121,19 +121,37 @@ sealed class Overlay : Form
             off += (long)img.Src.Width * img.Src.Height * 4;
         }
 
-        var primary = Screen.PrimaryScreen!.Bounds;
-        var meta = new
-        {
-            cmd = "scene", mode, part,
-            vw = Virtual.Width, vh = Virtual.Height,
-            px = primary.X - Virtual.X + primary.Width / 2.0,
-            py = primary.Y - Virtual.Y + primary.Height / 2.0,
-            rx = primary.Height * 0.19, ry = primary.Height * 0.27,
-            images = entries,
-        };
+        var meta = Geometry();
+        meta["cmd"] = "scene";
+        meta["mode"] = mode;
+        meta["part"] = part;
+        meta["images"] = entries;
         ctl.CoreWebView2.PostSharedBufferToScript(buf, CoreWebView2SharedBufferAccess.ReadWrite,
                                                   JsonSerializer.Serialize(meta));
         return buf;
+    }
+
+    /// <summary>Shows the sealed crack (the lock screen picture); animated for the screensaver.</summary>
+    public void PostSealed(bool animate)
+    {
+        var meta = Geometry();
+        meta["cmd"] = "sealed";
+        meta["animate"] = animate;
+        Post(meta);
+    }
+
+    /// <summary>Portal centre and size, and the primary monitor (the lock screen picture's frame),
+    /// all in overlay pixels.</summary>
+    Dictionary<string, object> Geometry()
+    {
+        var p = Screen.PrimaryScreen!.Bounds;
+        return new()
+        {
+            ["vw"] = Virtual.Width, ["vh"] = Virtual.Height,
+            ["px"] = p.X - Virtual.X + p.Width / 2.0, ["py"] = p.Y - Virtual.Y + p.Height / 2.0,
+            ["rx"] = p.Height * 0.19, ["ry"] = p.Height * 0.27,
+            ["fx"] = p.X - Virtual.X, ["fy"] = p.Y - Virtual.Y, ["fw"] = p.Width, ["fh"] = p.Height,
+        };
     }
 
     protected override void WndProc(ref Message m)
