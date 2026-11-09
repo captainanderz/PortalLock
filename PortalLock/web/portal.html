@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Portal</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; cursor: none; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+<script>
+  window.addEventListener('error', e => {
+    if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage('error: ' + e.message);
+  });
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="shaders.js"></script>
+<script src="portal.js"></script>
+<script src="demo.js"></script>
+</body>
+</html>
