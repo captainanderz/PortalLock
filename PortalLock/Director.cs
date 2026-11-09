@@ -11,7 +11,8 @@ sealed class Director
     readonly uint selfPid = (uint)Environment.ProcessId;
     readonly System.Windows.Forms.Timer tick = new() { Interval = 40 };
     readonly List<CoreWebView2SharedBuffer> inFlight = [];
-    TaskCompletionSource? frameReady;
+    readonly Cover cover = new();
+    TaskCompletionSource? frameReady, running;
     Phase phase = Phase.Idle;
     bool lockAfter;
     DateTime phaseStart;
@@ -23,6 +24,19 @@ sealed class Director
         ov.SessionLocked += OnSession;
         tick.Tick += (_, _) => Watchdog();
         tick.Start();
+    }
+
+    /// <summary>At startup: draw a frame while parked off-screen and log whether it arrives.
+    /// If it doesn't, the first frame of every show would flash.</summary>
+    public async Task CheckParkedRenderingAsync()
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        frameReady = new TaskCompletionSource();
+        ov.PostSealed(animate: false);
+        bool drawn = await Task.WhenAny(frameReady.Task, Task.Delay(2000)) == frameReady.Task;
+        ov.Post(new { cmd = "abort" });
+        Log.Write(drawn ? $"parked render check: frame after {sw.ElapsedMilliseconds} ms"
+                        : "parked render check: NO frame while off-screen (shows will flash)");
     }
 
     void Enter(Phase p)
@@ -47,16 +61,26 @@ sealed class Director
             var vs = ov.Virtual;
             var full = new Rectangle(Point.Empty, vs.Size);
             shot = Capture.Screen(vs);
+            cover.ShowImage(shot, vs); // looks exactly like the desktop; hides the overlay's arrival
 
             frameReady = new TaskCompletionSource();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             Track(ov.PostScene("outro", "shot", [new Img("shot", shot, full, full, 0)]));
-            await Task.WhenAny(frameReady.Task, Task.Delay(800));
-            if (phase != Phase.Outro) return;
-            ov.MoveOn();
-            ov.Post(new { cmd = "go" });
-
             var s = shot;
-            var layers = await Task.Run(() => Capture.Layers(vs, s, selfPid));
+            var layersTask = Task.Run(() => Capture.Layers(vs, s, selfPid)); // runs while the cover is up
+            bool drawn = await Task.WhenAny(frameReady.Task, Task.Delay(800)) == frameReady.Task;
+            if (phase == Phase.Outro)
+            {
+                ov.MoveOn(below: cover.Handle);
+                running = new TaskCompletionSource();
+                ov.Post(new { cmd = "go" });
+                bool settled = await Task.WhenAny(running.Task, Task.Delay(400)) == running.Task;
+                cover.HideNow();
+                Log.Write($"overlay up: first frame {(drawn ? "ok" : "timed out")}, " +
+                          $"{(settled ? "drawing" : "not drawing yet")} after {sw.ElapsedMilliseconds} ms");
+            }
+
+            var layers = await layersTask;
             keep.AddRange(layers);
             if (phase != Phase.Outro) return;
             Track(ov.PostScene("outro", "layers", layers));
@@ -118,6 +142,9 @@ sealed class Director
         {
             case "frame":
                 frameReady?.TrySetResult();
+                break;
+            case "running":
+                running?.TrySetResult();
                 break;
             case "loaded" when inFlight.Count > 0: // the page handles scenes in order
                 inFlight[0].Dispose();
@@ -182,6 +209,7 @@ sealed class Director
 
     void Finish()
     {
+        cover.HideNow();
         ov.MoveOff();
         ov.Post(new { cmd = "abort" });
         Enter(Phase.Idle);

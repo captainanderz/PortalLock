@@ -5,6 +5,8 @@ const cv = document.getElementById('c');
 const gl = cv.getContext('webgl2', { alpha: false, antialias: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
 const host = window.chrome && window.chrome.webview;
 const send = m => host ? host.postMessage(m) : (window.onPortalMessage && window.onPortalMessage(m));
+// Two animation frames after drawing, the frame has been composited, not just queued.
+const afterShown = fn => requestAnimationFrame(() => requestAnimationFrame(fn));
 
 // ---------------------------------------------------------------- GL plumbing
 function compile(type, src) {
@@ -207,7 +209,7 @@ function onScene(meta, buffer) {
   }
   if (meta.part === 'shot') {
     render(0);
-    requestAnimationFrame(() => send('frame'));
+    afterShown(() => send('frame'));
   } else if (meta.part === 'layers') {
     S.layersT = S.started ? S.t : 0;
   } else {
@@ -223,7 +225,7 @@ function handleCommand(m) {
     clearScene();
     setGeometry(m);
     showSealed(!!m.animate);
-    requestAnimationFrame(() => send('frame'));
+    afterShown(() => send('frame'));
   } else if (m.cmd === 'unlocked') {
     // Restart the crack at the lock screen's moment so it matches the picture you just saw.
     if (S.mode === 'sealed') { S.sealT0 = performance.now(); S.sealAnim = true; requestAnimationFrame(sealLoop); }
@@ -238,6 +240,7 @@ function start() {
   if (S.started || !S.mode) return;
   S.started = true;
   S.t0 = null;
+  S.frames = 0;
   requestAnimationFrame(loop);
 }
 
@@ -245,6 +248,7 @@ function loop(now) {
   if (!S.started) return;
   if (S.t0 === null) S.t0 = now;
   const st = render((now - S.t0) / 1000 * S.speed);
+  if (++S.frames === 3) send('running'); // the host can lift its cover now
   if (st.done) {
     const mode = S.mode;
     clearScene();

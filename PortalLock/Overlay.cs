@@ -52,7 +52,12 @@ sealed class Overlay : Form
         Native.SetWindowDisplayAffinity(Handle, Native.WDA_EXCLUDEFROMCAPTURE);
         Native.WTSRegisterSessionNotification(Handle, 0);
 
-        env = await CoreWebView2Environment.CreateAsync(null, Path.Combine(App.DataDir, profile));
+        // While parked off-screen, Chromium would treat the window as occluded and stop drawing.
+        // The first frame then appears only after we move on-screen: a black flash.
+        var options = new CoreWebView2EnvironmentOptions(
+            Environment.GetEnvironmentVariable("PORTALLOCK_BROWSER_ARGS") // debugging override
+            ?? "--disable-features=CalculateNativeWinOcclusion --disable-backgrounding-occluded-windows");
+        env = await CoreWebView2Environment.CreateAsync(null, Path.Combine(App.DataDir, profile), options);
         ctl = await env.CreateCoreWebView2ControllerAsync(Handle);
         ctl.ShouldDetectMonitorScaleChanges = false;
         ctl.BoundsMode = CoreWebView2BoundsMode.UseRawPixels;
@@ -92,7 +97,9 @@ sealed class Overlay : Form
         return true;
     }
 
-    public void MoveOn() => Native.SetWindowPos(Handle, Native.HWND_TOPMOST, Virtual.X, Virtual.Y,
+    /// <summary>Moves on-screen as a topmost window, optionally just below <paramref name="below"/>.</summary>
+    public void MoveOn(IntPtr below = default) => Native.SetWindowPos(Handle,
+        below == IntPtr.Zero ? Native.HWND_TOPMOST : below, Virtual.X, Virtual.Y,
         Virtual.Width, Virtual.Height, Native.SWP_NOACTIVATE | Native.SWP_SHOWWINDOW);
 
     public void MoveOff()

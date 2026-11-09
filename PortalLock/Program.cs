@@ -82,6 +82,7 @@ sealed class TrayApp : ApplicationContext
         try
         {
             await ov.InitAsync(Path.Combine(AppContext.BaseDirectory, "web"));
+            await director.CheckParkedRenderingAsync();
             var mods = Native.MOD_CONTROL | Native.MOD_ALT | Native.MOD_SHIFT | Native.MOD_NOREPEAT;
             bool a = Native.RegisterHotKey(ov.Handle, HotkeyLock, mods, (uint)Keys.L);
             bool b = Native.RegisterHotKey(ov.Handle, HotkeyTest, mods, (uint)Keys.T);
