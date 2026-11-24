@@ -4,3 +4,12 @@ obj/
 .idea/
 *.user
 *.DotSettings.user
+
+# Blizzard's models and textures, converted on your own PC by tools/convert-gate.ps1.
+# They are not ours to share: never commit them.
+PortalLock/web/gate/
+PortalLock/web/gate.js
+
+# Pictures rendered from those models (lock screen pictures, screenshots).
+assets/
+out/

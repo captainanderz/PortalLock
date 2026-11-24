@@ -57,6 +57,13 @@ static class Native
     public const uint SPI_SETSCREENSAVETIMEOUT = 0x000F, SPI_SETSCREENSAVEACTIVE = 0x0011,
         SPI_SETSCREENSAVESECURE = 0x0077, SPIF_UPDATEINIFILE_SENDCHANGE = 0x3;
 
+    public const int WH_KEYBOARD_LL = 13, WM_KEYDOWN = 0x0100, WM_SYSKEYDOWN = 0x0104;
+    public delegate IntPtr HookProc(int code, IntPtr w, IntPtr l);
+    [DllImport("user32")] public static extern IntPtr SetWindowsHookEx(int kind, HookProc proc, IntPtr module, uint thread);
+    [DllImport("user32")] public static extern bool UnhookWindowsHookEx(IntPtr hook);
+    [DllImport("user32")] public static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr w, IntPtr l);
+    [DllImport("kernel32", CharSet = CharSet.Unicode)] public static extern IntPtr GetModuleHandle(string? name);
+
     [StructLayout(LayoutKind.Sequential)]
     struct LASTINPUTINFO { public uint cbSize, dwTime; }
 

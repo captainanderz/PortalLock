@@ -138,7 +138,7 @@ sealed class Overlay : Form
         return buf;
     }
 
-    /// <summary>Shows the sealed crack (the lock screen picture); animated for the screensaver.</summary>
+    /// <summary>Shows the gate at rest (the lock screen picture); animated for the screensaver.</summary>
     public void PostSealed(bool animate)
     {
         var meta = Geometry();
@@ -147,8 +147,16 @@ sealed class Overlay : Form
         Post(meta);
     }
 
-    /// <summary>Portal centre and size, and the primary monitor (the lock screen picture's frame),
-    /// all in overlay pixels.</summary>
+    /// <summary>Asks for the lock screen picture; the page answers "picture:" and a PNG data URL.</summary>
+    public void PostPicture()
+    {
+        var meta = Geometry();
+        meta["cmd"] = "picture";
+        Post(meta);
+    }
+
+    /// <summary>Portal centre and size, the primary monitor (the lock screen picture's frame) and every
+    /// monitor (each looks into its own stretch of the sky), all in overlay pixels.</summary>
     Dictionary<string, object> Geometry()
     {
         var p = Screen.PrimaryScreen!.Bounds;
@@ -158,6 +166,8 @@ sealed class Overlay : Form
             ["px"] = p.X - Virtual.X + p.Width / 2.0, ["py"] = p.Y - Virtual.Y + p.Height / 2.0,
             ["rx"] = p.Height * 0.19, ["ry"] = p.Height * 0.27,
             ["fx"] = p.X - Virtual.X, ["fy"] = p.Y - Virtual.Y, ["fw"] = p.Width, ["fh"] = p.Height,
+            ["screens"] = Screen.AllScreens.Select(s => s.Bounds)
+                .Select(b => new[] { b.X - Virtual.X, b.Y - Virtual.Y, b.Width, b.Height }).ToArray(),
         };
     }
 
