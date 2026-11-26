@@ -1,4 +1,15 @@
-# PortalLock
+```text
+██████╗  ██████╗ ██████╗ ████████╗ █████╗ ██╗        ██╗      ██████╗  ██████╗██╗  ██╗
+██╔══██╗██╔═══██╗██╔══██╗╚══██╔══╝██╔══██╗██║        ██║     ██╔═══██╗██╔════╝██║ ██╔╝
+██████╔╝██║   ██║██████╔╝   ██║   ███████║██║        ██║     ██║   ██║██║     █████╔╝
+██╔═══╝ ██║   ██║██╔══██╗   ██║   ██╔══██║██║        ██║     ██║   ██║██║     ██╔═██╗
+██║     ╚██████╔╝██║  ██║   ██║   ██║  ██║███████╗   ███████╗╚██████╔╝╚██████╗██║  ██╗
+╚═╝      ╚═════╝ ╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝╚══════╝   ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝
+```
+
+[![PortalLock: the Dark Portal rises over the desktop, pulls the windows in and stands under the Hellfire sky](docs/demo.webp)](PortalLock%20demo.mp4)
+
+*Click it for the full video.*
 
 The Dark Portal burns its way up out of your desktop, as tall as your screen: two hooded statues
 leaning on their swords, a dragon's skull and horns above them, the green swirl open between them.
@@ -154,5 +165,5 @@ PortalLock's code is under the MIT License (see [LICENSE](LICENSE)).
 
 World of Warcraft, the Dark Portal and everything exported from the game are Blizzard
 Entertainment's. This repository contains none of their files, and its license does not cover them:
-keep `PortalLock/web/gate/`, `PortalLock/web/gate.js` and pictures rendered from them to yourself, and
-don't publish builds that contain them.
+keep `PortalLock/web/gate/` and `PortalLock/web/gate.js` to yourself, and don't publish builds that
+contain them.
