@@ -3,19 +3,24 @@ using Microsoft.Win32;
 namespace PortalLock;
 
 /// <summary>
-/// <c>PortalLock.scr /s</c>: while the PC is idle the sealed crack comes alive (mist turning, embers
-/// drifting, the crack breathing). Any input ends it; Windows then locks ("On resume, display logon
-/// screen") and the lock screen shows the same crack, frozen.
+/// <c>PortalLock.scr /s</c>, as Windows' screensaver: the gate at rest, alive on every monitor. Any input
+/// ends it. Off by default: PortalLock's own idle portal (IdleWatch) replaces it.
 /// </summary>
 sealed class ScreenSaverApp : ApplicationContext
 {
     readonly Overlay ov = new();
     readonly System.Windows.Forms.Timer watch = new() { Interval = 100 };
+    readonly System.Diagnostics.Stopwatch age = System.Diagnostics.Stopwatch.StartNew();
     uint baseline;
 
     public ScreenSaverApp()
     {
-        watch.Tick += (_, _) => { if (Native.LastInputTick() != baseline) ExitThread(); };
+        watch.Tick += (_, _) =>
+        {
+            if (Native.LastInputTick() == baseline) return;
+            Log.Write($"screensaver: ended by input after {age.Elapsed.TotalSeconds:0.0} s");
+            ExitThread();
+        };
         _ = RunAsync();
     }
 
@@ -29,6 +34,7 @@ sealed class ScreenSaverApp : ApplicationContext
             ov.PostSealed(animate: true);
             await Task.WhenAny(frame.Task, Task.Delay(1500));
             ov.MoveOn();
+            Log.Write($"screensaver: on screen after {age.ElapsedMilliseconds} ms");
             await Task.Delay(500); // ignore the tail end of whatever input happened before we started
             baseline = Native.LastInputTick();
             watch.Start();
@@ -61,7 +67,6 @@ static class ScreenSaverSetup
         using var k = Registry.CurrentUser.OpenSubKey(DesktopKey);
         return string.Equals(k?.GetValue("SCRNSAVE.EXE") as string, ScrPath, StringComparison.OrdinalIgnoreCase);
     }
-
     /// <summary>Starts after <paramref name="minutes"/> idle and locks the PC when it ends.</summary>
     public static void Enable(int minutes = 10)
     {

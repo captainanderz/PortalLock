@@ -1,14 +1,16 @@
 'use strict';
-/* global onScene, start, render, S */
+/* global onScene, start, render, handleCommand, gateReady, S */
 // Browser-only preview with a fake desktop. Ignored inside the app (WebView2 host present).
 // portal.html            -> loops outro, intro, outro...
 // portal.html?mode=outro&t=2.4 -> one frozen frame (for checking a moment in detail)
 // portal.html?speed=0.4  -> slow motion
-(function demo() {
+// portal.html?screens=3&w=5760&h=1080 -> a desktop of that size: three monitors side by side, the middle one primary
+gateReady.then(function demo() {
   if (window.chrome && window.chrome.webview) return;
   const q = new URLSearchParams(location.search);
-  const vw = Math.round(innerWidth * devicePixelRatio) || 1600;
-  const vh = Math.round(innerHeight * devicePixelRatio) || 900;
+  const vw = +q.get('w') || Math.round(innerWidth * devicePixelRatio) || 1600;
+  const vh = +q.get('h') || Math.round(innerHeight * devicePixelRatio) || 900;
+  const mons = +q.get('screens') || 1, mw = Math.round(vw / mons), mid = Math.floor(mons / 2);
   const u = vh / 1440; // scale fake UI to the viewport
 
   const mk = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c.getContext('2d'); };
@@ -74,7 +76,8 @@
     }
     return { buf, images };
   }
-  const geo = { cmd: 'scene', vw, vh, px: vw / 2, py: vh / 2, rx: vh * 0.19, ry: vh * 0.27 };
+  const geo = { cmd: 'scene', vw, vh, px: (mid + 0.5) * mw, py: vh / 2, rx: vh * 0.19, ry: vh * 0.27,
+                fx: mid * mw, fy: 0, fw: mw, fh: vh, screens: Array.from({ length: mons }, (_, i) => [i * mw, 0, mw, vh]) };
   const shotImg = { kind: 'shot', ctx: shot, x: 0, y: 0, w: vw, h: vh };
   const layerImgs = [{ kind: 'bg', ctx: bg, x: 0, y: 0, w: vw, h: vh }, ...wins.map(w => ({ kind: 'win', ...w }))];
   const shotPack = pack([shotImg]), layerPack = pack(layerImgs), allPack = pack([shotImg, ...layerImgs]);
@@ -103,4 +106,4 @@
     if (m === 'introDone') setTimeout(outro, 1500);
   };
   setTimeout(outro, 600);
-})();
+});

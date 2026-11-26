@@ -4,7 +4,8 @@ namespace PortalLock;
 
 enum Phase { Idle, Outro, Locked, Intro }
 
-/// <summary>Runs the show: portal swallows the desktop, PC locks, and on unlock the portal spits it back out.</summary>
+/// <summary>Runs the show: the portal swallows the windows, the gate is held until the PC is touched and
+/// locks, and on unlock the portal throws everything back out.</summary>
 sealed class Director
 {
     readonly Overlay ov;
@@ -13,9 +14,21 @@ sealed class Director
     readonly List<CoreWebView2SharedBuffer> inFlight = [];
     readonly Cover cover = new();
     TaskCompletionSource? frameReady, running;
+    TaskCompletionSource<string>? picture;
     Phase phase = Phase.Idle;
     bool lockAfter;
     DateTime phaseStart;
+
+    // After the lock animation the gate is held (see HoldGate) until the PC is touched.
+    readonly EventWaitHandle holdOver = HoldGuard.Flag();
+    KeyCatcher? keys;
+    bool alive;             // the gate at rest is animating, not frozen
+    bool holding;           // waiting for a touch
+    bool byItself;          // this show was started by the PC being left alone (see WatchIdle)
+    uint touchBaseline;     // the last input there had been when we began watching for a touch
+    DateTime? touched;      // when the PC was touched and Windows asked to lock
+    uint idleDoneFor;       // the last input before the portal last opened by itself: once per idle spell
+    string? busyLogged;
 
     public Director(Overlay ov)
     {
@@ -39,6 +52,30 @@ sealed class Director
                         : "parked render check: NO frame while off-screen (shows will flash)");
     }
 
+    /// <summary>Saves the lock screen picture: the gate at rest at the primary monitor's size, the frame the
+    /// lock animation ends on and the unlock animation starts from. Returns where, or null if the portal
+    /// is busy or missing.</summary>
+    public async Task<string?> SaveLockScreenPicture()
+    {
+        if (phase != Phase.Idle || !ov.Ready || picture != null) return null;
+        picture = new TaskCompletionSource<string>();
+        try
+        {
+            ov.SyncBounds();
+            ov.PostPicture();
+            var answer = await picture.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "PortalLock lock screen.png");
+            await File.WriteAllBytesAsync(path, Convert.FromBase64String(answer[(answer.IndexOf(',') + 1)..]));
+            Log.Write($"lock screen picture saved to {path}");
+            return path;
+        }
+        finally
+        {
+            picture = null;
+            if (phase == Phase.Idle) ov.Post(new { cmd = "abort" });
+        }
+    }
+
     void Enter(Phase p)
     {
         phase = p;
@@ -46,13 +83,16 @@ sealed class Director
         Log.Write($"phase {p}");
     }
 
-    /// <summary>Hotkey / menu entry point. <paramref name="doLock"/> false = preview without locking.</summary>
-    public async void Open(bool doLock)
+    /// <summary>Hotkey / menu entry point. <paramref name="doLock"/> false = preview without locking.
+    /// <paramref name="idle"/>: opened by itself; a touch before the gate is up gives the desktop back.</summary>
+    public async void Open(bool doLock, bool idle = false)
     {
-        if (phase != Phase.Idle) return;
+        if (phase != Phase.Idle || picture != null) return;
         if (!ov.Ready) { if (doLock) Native.LockWorkStation(); return; }
         Enter(Phase.Outro);
         lockAfter = doLock;
+        byItself = idle;
+        if (idle) WatchForTouch();
         Bitmap? shot = null;
         var keep = new List<Img>();
         try
@@ -100,7 +140,7 @@ sealed class Director
     async void StartIntro()
     {
         Enter(Phase.Intro);
-        ov.Post(new { cmd = "unlocked" }); // the crack comes alive while we photograph the desktop
+        ov.Post(new { cmd = "unlocked" }); // the gate comes alive while we photograph the desktop
         var keep = new List<Img>();
         Bitmap? shot = null;
         try
@@ -154,7 +194,7 @@ sealed class Director
                 if (lockAfter)
                 {
                     Enter(Phase.Locked);
-                    if (!Native.LockWorkStation()) StartIntro();
+                    if (Settings.HoldGate) HoldGate(); else LockNow();
                 }
                 else
                 {
@@ -168,10 +208,106 @@ sealed class Director
             case "introDone" when phase == Phase.Intro:
                 Finish();
                 break;
+            case var m when m.StartsWith("picture:"):
+                picture?.TrySetResult(m["picture:".Length..]);
+                break;
             case var m when m.StartsWith("error"):
                 Log.Write($"page {m}");
                 break;
         }
+    }
+
+    void LockNow()
+    {
+        if (!Native.LockWorkStation()) StartIntro();
+    }
+
+    /// <summary>
+    /// The lock animation has ended on the gate at rest. Windows' lock screen can only repeat one picture
+    /// on every monitor, so the PC is not locked yet: the gate stays up, alive across all monitors, and
+    /// the PC locks the moment it is touched. Until then keys are swallowed (KeyCatcher), and a second
+    /// process (HoldGuard) locks the PC should this one fail to.
+    /// </summary>
+    void HoldGate()
+    {
+        ov.Post(new { cmd = "alive" });
+        alive = true;
+        touched = null;
+        holding = true;
+        WatchForTouch();
+        holdOver.Reset();
+        HoldGuard.Start();
+        Log.Write("holding the gate until the PC is touched" + (keys!.Working ? "" : " (keys are not caught)"));
+    }
+
+    /// <summary>From now on the first touch counts: keys are swallowed and reported, and WatchTouch
+    /// notices the mouse.</summary>
+    void WatchForTouch()
+    {
+        touchBaseline = Native.LastInputTick();
+        keys ??= new KeyCatcher(() => ov.BeginInvoke(() => Touched("a key")));
+    }
+
+    void Touched(string by)
+    {
+        if (phase == Phase.Outro && byItself)
+        {
+            // It opened by itself, and someone is there after all: no lock, as with a screensaver's grace.
+            Log.Write($"touched ({by}) while the portal opened by itself: giving the desktop back");
+            Finish();
+            return;
+        }
+        if (!holding) return;
+        holding = false;
+        touched = DateTime.UtcNow;
+        Log.Write($"touched ({by}): locking");
+        if (!Native.LockWorkStation()) { EndHold(); StartIntro(); }
+    }
+
+    /// <summary>Windows has locked (or the hold is called off): nothing is left to watch.</summary>
+    void EndHold()
+    {
+        holding = false;
+        byItself = false;
+        touched = null;
+        keys?.Dispose();
+        keys = null;
+        holdOver.Set();
+        if (!alive) return;
+        alive = false;
+        // Back to the still picture the lock screen shows and the unlock animation starts from.
+        if (phase == Phase.Locked) ov.PostSealed(animate: false);
+    }
+
+    /// <summary>Opens the portal by itself once the PC has been left alone for IdleWatch.After.</summary>
+    void WatchIdle()
+    {
+        if (phase != Phase.Idle || !ov.Ready || picture != null || !Settings.IdlePortal) return;
+        uint last = Native.LastInputTick();
+        if (last == idleDoneFor) return;
+        IdleWatch.Listen();
+        if (IdleWatch.Idle < IdleWatch.After) return;
+        if (IdleWatch.Busy() is { } why)
+        {
+            if (why != busyLogged) Log.Write($"idle, but {why}: waiting");
+            busyLogged = why;
+            return;
+        }
+        busyLogged = null;
+        idleDoneFor = last;
+        Log.Write($"idle for {IdleWatch.Idle.TotalSeconds:0} s: opening the portal");
+        Open(doLock: true, idle: true);
+    }
+
+    void WatchTouch()
+    {
+        bool watching = holding || (phase == Phase.Outro && byItself);
+        if (watching && Native.LastInputTick() != touchBaseline) Touched("input"); // keys also come through the catcher
+        // Windows locks within moments of being asked. If it has not, do not go on swallowing keys.
+        if (touched == null || DateTime.UtcNow - touched < TimeSpan.FromSeconds(5)) return;
+        Log.Write("Windows did not lock: giving the desktop back");
+        EndHold();
+        StartIntro();
     }
 
     async void OnSession(bool locked)
@@ -179,9 +315,10 @@ sealed class Director
         Log.Write(locked ? "session locked" : "session unlocked");
         if (locked)
         {
+            EndHold();
             if (phase == Phase.Locked || !ov.Ready) return;
             // Locked some other way (Win+L, Ctrl+Alt+Del, screensaver, timeout): cover the desktop with
-            // the sealed crack now, behind the lock screen, so the portal can tear it open on unlock.
+            // the gate at rest now, behind the lock screen, so the portal can throw it back out on unlock.
             var wasIdle = phase == Phase.Idle;
             Enter(Phase.Locked);
             frameReady = new TaskCompletionSource();
@@ -197,6 +334,8 @@ sealed class Director
 
     void Watchdog()
     {
+        WatchTouch();
+        WatchIdle();
         if (phase is not (Phase.Outro or Phase.Intro)) return;
         bool esc = (Native.GetAsyncKeyState(0x1B) & 0x8000) != 0;
         bool stuck = DateTime.UtcNow - phaseStart > TimeSpan.FromSeconds(20);
@@ -213,6 +352,7 @@ sealed class Director
         ov.MoveOff();
         ov.Post(new { cmd = "abort" });
         Enter(Phase.Idle);
+        EndHold();
     }
 
     void Track(CoreWebView2SharedBuffer? buf)
