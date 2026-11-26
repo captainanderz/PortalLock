@@ -9,8 +9,6 @@
 
 [![PortalLock: the Dark Portal rises over the desktop, pulls the windows in and stands under the Hellfire sky](docs/demo.webp)](PortalLock%20demo.mp4)
 
-*Click it for the full video.*
-
 The Dark Portal burns its way up out of your desktop, as tall as your screen: two hooded statues
 leaning on their swords, a dragon's skull and horns above them, the green swirl open between them.
 Your wallpaper gives way to the Hellfire sky, the statues' eyes catch fire, and the portal swallows
