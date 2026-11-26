@@ -5,8 +5,8 @@ leaning on their swords, a dragon's skull and horns above them, the green swirl 
 Your wallpaper gives way to the Hellfire sky, the statues' eyes catch fire, and the portal swallows
 your windows one by one, leaving the gate alive under the sky until you touch the PC, which then
 locks. When you unlock, the portal flares, throws your windows back out to where they were, and the
-gate burns away, your wallpaper coming back in its place. The portal never closes: it comes and goes
-with the gate. Leave the PC alone for 3 minutes and the portal opens by itself.
+gate burns away, your wallpaper coming back in its place. Leave the PC alone for 3 minutes and the
+portal opens by itself.
 
 The gate, its swirl and the sky are World of Warcraft's own 3D models (the Outland Dark Portal, its
 effect model and the Hellfire skybox), drawn live, so they are sharp at any screen size and across
@@ -100,10 +100,9 @@ picture seamlessly:
   a slide show) and while any app has played sound in the last 10 seconds, since unlike Windows'
   screensaver it cannot hear an app asking for the screen to stay on. Untick tray → *Open the portal
   after 3 minutes idle* to turn it off.
-- **Windows' screensaver:** the idle portal replaces it, so PortalLock unregisters itself as Windows'
-  screensaver while the idle portal is on (on a managed PC, Windows' screensaver timeout may be set
-  by policy anyway). With the idle portal off, `PortalLock.exe screensaver-on` installs it as
-  `PortalLock.scr` instead.
+- **Windows' screensaver:** while the idle portal is on, PortalLock removes itself as Windows'
+  screensaver, since both would cover the same idle PC. With the idle portal off,
+  `PortalLock.exe screensaver-on` installs it as Windows' screensaver (`PortalLock.scr`).
 
 ## How it works
 
@@ -111,23 +110,22 @@ picture seamlessly:
    without any windows), plus each visible window captured on its own, so windows hidden behind others
    are complete too.
 2. **Overlay.** One borderless WebView2 window covers every monitor. It waits off-screen between runs,
-   so the first frame is already drawn when it moves on-screen and you never see a flash. It also
-   excludes itself from screen capture, so after an unlock the app can photograph the live desktop
-   *underneath* its own cover.
+   so the first frame is already drawn when it moves on-screen. It also excludes itself from screen
+   capture, so after an unlock the app can photograph the live desktop *underneath* its own cover.
 3. **Animation.** WebGL in `PortalLock/web/`: shaders in `shaders.js`, timelines in `portal.js`.
-   Windows are textured quads that get pulled along a spiral. The wallpaper (with the icons and the
-   taskbar) never goes in: the sky fades in in its place. The gate is a 3D model (`PortalLock/web/gate/`,
-   made by `tools/convert-gate.ps1`): about 46,000 triangles of stone plus the swirl, whose spiral arms
-   turn at the speed the game's model gives. Each frame it is drawn into a picture of its own, with a
+   Windows are textured quads that get pulled along a spiral. The wallpaper, with the icons and the
+   taskbar, fades into the sky. The gate is a 3D model (`PortalLock/web/gate/`, made by
+   `tools/convert-gate.ps1`): about 46,000 triangles of stone plus the swirl, whose spiral arms turn
+   at the speed the game's model gives. Each frame it is drawn into a picture of its own, with a
    depth buffer and smoothed edges; that picture is then laid into the scene, fitted so the gate fills
    the primary monitor from top to bottom. The stone's light from the sky and from a key light, with
-   the shadows they leave, is baked into a light map by Blender (`gate/light.png`). The swirl's steady
-   glow does not light the stone; only its flashes do. Behind everything is the Hellfire sky, drawn
-   round the camera with its nebulae and nether streams drifting at the model's speeds. A monitor
-   beside the primary one looks into the stretch of sky next to the primary's, as if the monitors
-   stood round you, so the sky runs on from one monitor to the next at its own size (`skyViews` in
-   `portal.js`). Green sparks stream into the portal (and out of it) only while windows are on the
-   move. Windows still lying on the desktop are behind the gate; once torn loose they fly in front of it.
+   the shadows they leave, is baked into a light map by Blender (`gate/light.png`), and the swirl's
+   flashes light it too. Behind everything is the Hellfire sky, drawn round the camera with its
+   nebulae and nether streams drifting at the model's speeds. A monitor beside the primary one looks
+   into the stretch of sky next to the primary's, as if the monitors stood round you, so the sky runs
+   on from one monitor to the next at its own size (`skyViews` in `portal.js`). Green sparks stream
+   into the portal (and out of it) while windows are on the move. Windows still lying on the desktop
+   are behind the gate; once torn loose they fly in front of it.
 
 ## Working on it
 
@@ -141,9 +139,9 @@ picture seamlessly:
 - Camera: `CAM` in `PortalLock/web/portal.js` (where it starts while the gate is conjured, and where
   it settles). `fitGate` then scales the settled view so the gate fills the monitor's height, and
   `OPENING` says where the sparks and the windows' spiral are centred.
-- The swirl: its layers are in `swirlLook` in `portal.js`. The model's streaks of bright light along
-  the swirl's edge (its parts 0 to 12) are left out there; return a look for them to bring them back.
-  How a flash lights the stone is in `FS_STONE`.
+- The swirl: its layers are in `swirlLook` in `portal.js`; a part it gives no look is not drawn,
+  as with the model's streaks of light along the swirl's edge (its parts 0 to 12). How a flash
+  lights the stone is in `FS_STONE`.
 - The sky: `SKY` in `portal.js` is which way the camera looks into it and how wide; `skyLook` has
   its layers. Turning `yaw` brings other planets and streams into view beside the gate.
 - Timing: `outroState` / `introState` in `portal.js` (`GATE_UP` is when the gate has risen).
